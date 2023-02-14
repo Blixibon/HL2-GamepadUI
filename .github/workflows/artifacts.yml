@@ -1,0 +1,109 @@
+name: Build Artifacts
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        source_branch: [sdk2013-sp, sdk2013-mp]
+
+    runs-on: windows-2022
+
+    steps:
+    - name: Checkout Mini Source SDK
+      uses: actions/checkout@v3
+      with:
+        repository: Blixibon/mini-source-sdk # Joshua-Ashton
+        ref: gamepadui
+
+    - name: Checkout Gamepad UI
+      uses: actions/checkout@v3
+      with:
+        path: ${{ matrix.source_branch }}/gamepadui
+        submodules: recursive
+
+    - name: Move Gamepad UI to src
+      working-directory: ${{ matrix.source_branch }}
+      run: |
+        mv gamepadui/src/game src
+        mv gamepadui/src/vpc_scripts/* src/vpc_scripts
+
+    - name: Find Visual Studio
+      run: |
+        $installationPath = Get-VSSetupInstance `
+          | Select-VSSetupInstance -Require Microsoft.VisualStudio.Workload.NativeDesktop -Latest `
+          | Select-Object -ExpandProperty InstallationPath
+        Write-Output "VSDEVCMD=${installationPath}\Common7\Tools\VsDevCmd.bat" `
+          | Out-File -FilePath "${Env:GITHUB_ENV}" -Append
+
+    - name: Build MSVC x86
+      working-directory: ${{ matrix.source_branch }}/src
+      run: |
+        & "${Env:COMSPEC}" /s /c "`"${Env:VSDEVCMD}`" -arch=x86 -host_arch=x64 -no_logo && set" `
+          | % { , ($_ -Split '=', 2) } `
+          | % { [System.Environment]::SetEnvironmentVariable($_[0], $_[1]) }
+        .\fix_registry.bat
+        .\creategamepaduiprojects.bat
+        devenv gamepadui.sln /upgrade
+        msbuild gamepadui.sln /nodeReuse:false /t:Rebuild /p:Configuration=Release /p:Platform=x86 /m /v:minimal
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: gamepadui_${{ matrix.source_branch }}_win32
+        path: ${{ matrix.source_branch }}/game
+        if-no-files-found: error
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        source_branch: [sdk2013-sp, sdk2013-mp]
+
+    runs-on: ubuntu-latest
+    container: debian:bullseye
+
+    steps:
+    - name: Install Dependencies
+      run: |
+        dpkg --add-architecture i386
+        apt update
+        apt install -y build-essential git libstdc++6:i386 gcc-multilib g++-multilib libsdl2-dev:i386
+
+    - name: Checkout Mini Source SDK
+      uses: actions/checkout@v3
+      with:
+        repository: Blixibon/mini-source-sdk # Joshua-Ashton
+        ref: gamepadui
+
+    - name: Checkout Gamepad UI
+      uses: actions/checkout@v3
+      with:
+        path: ${{ matrix.source_branch }}/gamepadui
+        submodules: recursive
+
+    - name: Move Gamepad UI to src
+      working-directory: ${{ matrix.source_branch }}
+      run: |
+        mv gamepadui/src/game src
+        mv gamepadui/src/vpc_scripts/* src/vpc_scripts
+
+    - name: Change SDL header
+      working-directory: ${{ matrix.source_branch }}/src/game/gamepadui
+      shell: bash
+      run: sed -i 's/\"SDL.h\"/<SDL2\/SDL.h>/' gamepadui_options.cpp
+
+    - name: Build GCC x86
+      working-directory: ${{ matrix.source_branch }}/src
+      run: |
+        ./creategamepaduiprojects.sh
+        make -f gamepadui.mak -j $(nproc)
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: gamepadui_${{ matrix.source_branch }}_linux32
+        path: ${{ matrix.source_branch }}/game
+        if-no-files-found: error
