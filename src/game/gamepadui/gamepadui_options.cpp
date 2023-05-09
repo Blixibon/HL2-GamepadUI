@@ -1208,7 +1208,13 @@ int GetCurrentDisplayMode()
         return 0;
     }
 
+#ifdef HL2_RETAIL
     return 2 + GetSDLDisplayIndex();
+#else
+    // TODO FIXME: SDK2013 uses the inverse here...1 is "windowed" and 0 is "fullscreen" in materialsystem.
+    // but our values mean the opposite in gamepadUI code. (Madi)
+    return 1 + GetSDLDisplayIndex();
+#endif
 }
 
 
@@ -1503,7 +1509,10 @@ GamepadUIOptionsPanel::GamepadUIOptionsPanel( vgui::Panel* pParent, const char* 
 
 GamepadUIOptionsPanel::~GamepadUIOptionsPanel()
 {
-    s_pOptionsPanel = NULL;
+    if (s_pOptionsPanel == this)
+    {
+        s_pOptionsPanel = NULL;
+    }
 }
 
 void GamepadUIOptionsPanel::OnThink()
